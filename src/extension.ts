@@ -327,6 +327,7 @@ export function isValidExecutable(renpyExecutableLocation: string): boolean {
         return false;
     }
     return fs.existsSync(renpyExecutableLocation);
+    1;
 }
 // Attempts to run renpy executable through console commands.
 function RunWorkspaceFolder(): boolean {

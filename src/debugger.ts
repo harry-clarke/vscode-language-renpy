@@ -1,19 +1,8 @@
 import * as vscode from "vscode";
-import { DebugSession, TerminatedEvent } from "@vscode/debugadapter";
+import { DebugSession, ExitedEvent, InitializedEvent, TerminatedEvent } from "@vscode/debugadapter";
 import { getWorkspaceFolder } from "./workspace";
 import { Configuration } from "./configuration";
-import { logToast } from "./logger";
-import { isValidExecutable } from "./extension";
-
-function getTerminal(name: string): vscode.Terminal {
-    let i: number;
-    for (i = 0; i < vscode.window.terminals.length; i++) {
-        if (vscode.window.terminals[i].name === name) {
-            return vscode.window.terminals[i];
-        }
-    }
-    return vscode.window.createTerminal(name);
-}
+import { logMessage } from "./logger";
 
 export class RenpyAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
     createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
@@ -25,6 +14,8 @@ class RenpyDebugSession extends DebugSession {
     private command = "run";
     private args?: string[];
 
+    private terminal?: vscode.Terminal;
+
     public constructor(command: string, args?: string[]) {
         super();
         this.command = command;
@@ -34,24 +25,41 @@ class RenpyDebugSession extends DebugSession {
     }
 
     protected override initializeRequest(): void {
-        const terminal = getTerminal("Ren'py Debug");
-        terminal.show();
-        let program = Configuration.getRenpyExecutablePath();
-
-        if (!isValidExecutable(program)) {
-            logToast(vscode.LogLevel.Error, "Ren'Py executable location not configured or is invalid.");
-            return;
-        }
-
-        program += " " + getWorkspaceFolder();
+        const localArgs = [getWorkspaceFolder()];
         if (this.command) {
-            program += " " + this.command;
+            localArgs.push(this.command);
         }
         if (this.args) {
-            program += " " + this.args.join(" ");
+            localArgs.push(...this.args);
         }
-        terminal.sendText(program);
-        this.sendEvent(new TerminatedEvent());
+
+        const terminalName = "Ren'py Debug";
+        const terminalOptions: vscode.TerminalOptions = {
+            name: terminalName,
+            shellPath: Configuration.getRenpyExecutablePath(),
+            shellArgs: localArgs,
+            cwd: getWorkspaceFolder(),
+            message: "Opening Ren'Py",
+        };
+
+        this.terminal = vscode.window.createTerminal(terminalOptions);
+
+        logMessage(vscode.LogLevel.Debug, "Ren'Py terminal started");
+        this.sendEvent(new InitializedEvent());
+        vscode.window.onDidCloseTerminal((t) => {
+            if (t.name === terminalName) {
+                console.log("Ren'Py terminal closed");
+                logMessage(vscode.LogLevel.Debug, "Ren'Py terminal closed");
+                this.sendEvent(new ExitedEvent(t.exitStatus?.code ?? -1));
+                this.sendEvent(new TerminatedEvent());
+            }
+        });
+    }
+
+    protected override terminateRequest(): void {
+        if (this.terminal) {
+            this.terminal.dispose();
+        }
     }
 }
 
